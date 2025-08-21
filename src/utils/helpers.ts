@@ -1,8 +1,9 @@
-import {CachedMetadata, parseFrontMatterTags, TFile, Vault} from 'obsidian'
+import {CachedMetadata, parseFrontMatterTags, TFile, Vault, App} from 'obsidian'
 
 import {LOCAL_SORT_OPT} from '../constants'
 
 import type {SortDirection, TagMeta, LinkMeta, KeysOfType} from 'src/_types'
+
 export const isMacOS = () => window.navigator.userAgent.includes('Macintosh')
 export const classifyString = (str: string) => {
   const sanitzedGroupName = (str ?? '').replace(/[^A-Za-z0-9]/g, '')
@@ -56,9 +57,34 @@ export const getIndentationSpacesFromTodoLine = (line: string) =>
   /^(\s*)([\-\*]|[0-9]+\.)\s\[(.{1})\]\s{1,4}(\S+)/.exec(line)?.[1]?.length ?? 0
 export const todoLineIsChecked = (line: string) =>
   /^(\s|\>)*([\-\*]|[0-9]+\.)\s\[(\S{1})\]/.test(line)
-export const getFileLabelFromName = (filename: string) =>
+export const getFileLabelFromName = (filename: string) => 
   /^(.+)\.md$/.exec(filename)?.[1]
 
+// Helper function to get date_modified from frontmatter
+export const getDateModifiedFromFile = (file: TFile, app: App): number | null => {
+  const cache = app.metadataCache.getFileCache(file)
+  if (cache?.frontmatter?.date_modified) {
+    const dateModified = cache.frontmatter.date_modified
+    
+    // Handle different date formats
+    let parsed: Date
+    if (typeof dateModified === 'string') {
+      parsed = new Date(dateModified)
+    } else if (dateModified instanceof Date) {
+      parsed = dateModified
+    } else {
+      return null
+    }
+    
+    // Validate the date
+    if (!isNaN(parsed.getTime())) {
+      return parsed.getTime()
+    }
+  }
+  return null
+}
+
+// Modified sorting function to use date_modified frontmatter property
 export const sortGenericItemsInplace = <
   T,
   NK extends KeysOfType<T, string>,
@@ -68,6 +94,7 @@ export const sortGenericItemsInplace = <
   direction: SortDirection,
   sortByNameKey: NK,
   sortByTimeKey: TK,
+  app?: App, // Add app parameter for frontmatter access
 ) => {
   if (direction === 'a->z')
     items.sort((a, b) =>
@@ -85,10 +112,51 @@ export const sortGenericItemsInplace = <
         LOCAL_SORT_OPT,
       ),
     )
-  if (direction === 'new->old')
-    items.sort((a, b) => (b[sortByTimeKey] as any) - (a[sortByTimeKey] as any))
-  if (direction === 'old->new')
-    items.sort((a, b) => (a[sortByTimeKey] as any) - (b[sortByTimeKey] as any))
+  
+  // Modified date sorting to prioritize date_modified frontmatter
+  if (direction === 'new->old') {
+    items.sort((a, b) => {
+      // Check if items have a 'file' property (assuming they're file-related objects)
+      if (app && a && b && typeof a === 'object' && typeof b === 'object' && 
+          'file' in a && 'file' in b && 
+          a.file instanceof TFile && b.file instanceof TFile) {
+        
+        const dateModifiedA = getDateModifiedFromFile(a.file, app)
+        const dateModifiedB = getDateModifiedFromFile(b.file, app)
+        
+        // Use date_modified if available, otherwise fallback to original time key
+        const timeA = dateModifiedA !== null ? dateModifiedA : (a[sortByTimeKey] as any)
+        const timeB = dateModifiedB !== null ? dateModifiedB : (b[sortByTimeKey] as any)
+        
+        return timeB - timeA
+      }
+      
+      // Fallback to original behavior if no app context or not file objects
+      return (b[sortByTimeKey] as any) - (a[sortByTimeKey] as any)
+    })
+  }
+  
+  if (direction === 'old->new') {
+    items.sort((a, b) => {
+      // Check if items have a 'file' property (assuming they're file-related objects)
+      if (app && a && b && typeof a === 'object' && typeof b === 'object' && 
+          'file' in a && 'file' in b && 
+          a.file instanceof TFile && b.file instanceof TFile) {
+        
+        const dateModifiedA = getDateModifiedFromFile(a.file, app)
+        const dateModifiedB = getDateModifiedFromFile(b.file, app)
+        
+        // Use date_modified if available, otherwise fallback to original time key
+        const timeA = dateModifiedA !== null ? dateModifiedA : (a[sortByTimeKey] as any)
+        const timeB = dateModifiedB !== null ? dateModifiedB : (b[sortByTimeKey] as any)
+        
+        return timeA - timeB
+      }
+      
+      // Fallback to original behavior if no app context or not file objects
+      return (a[sortByTimeKey] as any) - (b[sortByTimeKey] as any)
+    })
+  }
 }
 
 export const ensureMdExtension = (path: string) => {
